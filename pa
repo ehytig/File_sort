@@ -1,0 +1,228 @@
+#!/usr/bin/env bash
+
+#--------------------------------------------------
+# Check package dependency
+#--------------------------------------------------
+# check if package is installed
+dpkg -s tree > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+  :
+else
+  echo "package tree is not installed" >&2
+fi
+
+
+#--------------------------------------------------
+# get options from configuration.txt
+#--------------------------------------------------
+covertpath (){
+  local var1="${1:0:1}"
+  var1="${var1,}"
+  local filelink="/mnt/$var1${1:2}"
+  filelink=`echo $filelink | tr "\\\\\\\\" "/"`
+  echo $filelink
+}
+
+# get information from configuration.txt
+con="$HOME/bin/papermv/configuration.txt"
+downloadpath_win=`sed 2p -n $con`
+storepath_win=`sed 4p -n $con`
+ris_storepath_win=`sed 8p -n $con`
+
+# download directory & storedirectory
+downloadpath=`covertpath $downloadpath_win`
+storepath=`covertpath $storepath_win`
+ris_storepath=`covertpath $ris_storepath_win`
+
+# get the .ris file list
+rislist=`ls $downloadpath -t | grep .ris`
+
+#-----------------------------------------------------------------------
+#  Handle command line arguments
+#-----------------------------------------------------------------------
+__ScriptVersion="1.0"
+
+#===  FUNCTION  ================================================================
+#         NAME:  usage
+#  DESCRIPTION:  Display usage information.
+#===============================================================================
+function usage ()
+{
+  echo "Usage :  $0 [options] [--]
+
+    Options:
+    -n|number     assign how many .ris files will be handled
+    -a|all        Handle all .ris files
+    -h|help       Display this message
+    -v|version    Display script version"
+
+}    # ----------  end of function usage  ----------
+
+unset number 
+number=1
+
+while getopts ":hvn:a" opt
+do
+  case $opt in
+
+  a|all      )  number=`echo $rislist | wc -l` ;;
+
+  n|number   )  number="$OPTARG" ;;
+
+  h|help     )  usage; exit 0   ;;
+
+  v|version  )  echo "$0 -- Version $__ScriptVersion"; exit 0   ;;
+
+  * )  echo -e "\n  Option does not exist : $OPTARG\n"
+      usage; exit 1   ;;
+
+  esac    # --- end of case ---
+done
+shift $(($OPTIND-1))
+
+#------------------------------
+#  Check parameters
+#------------------------------
+if echo "$number" | grep "^[[:digit:]]+$" -E -q ; then
+  :
+else
+  echo "you should put correct number for -n parameter"
+  usage; exit 1 
+fi
+#------------------------------
+# display the .ris files we are going to move
+#------------------------------
+echo "These .ris files are going to be handled:"
+echo "---------------------------------------------"
+echo "$rislist" | sed "1,${number}p" -n
+echo "---------------------------------------------"
+rishandle=`echo "$rislist" | sed "1,${number}p" -n`
+
+
+#------------------------------
+# decide which directory will these pdf be put into
+#------------------------------
+tree $storepath -d --noreport
+storedirectory_list=`tree $storepath -dfi --noreport`
+
+function read_store() {
+  read -p "which directory will you choose?(enter its name):" keyword
+
+  if echo "$keyword" | grep "^[[:digit:]]+$" -E -q ; then
+    storedirectory_list=`echo "$storedirectory_list" | sed "${keyword}p" -n`
+  else
+    storedirectory_list=`echo "$storedirectory_list" | grep $keyword`
+  fi
+  storedirectory_noprefix=`echo "$storedirectory_list" | sed -e "s,$storepath,," `
+}
+
+checkstore()
+{
+  if [ -z "$storedirectory_list"]; then
+    read -p "If you want to create new folder?(y/n):" choice
+    if [ "$choice" = "y" ]; then
+      read -p "Enter the new folder path:" newfolder
+      storedirectory_list="${storepath}/$newfolder"
+      mkdir -p "$storedirectory_list"
+      storedirectory_noprefix=`echo "$storedirectory_list" | sed -e "s,$storepath,," `
+      echo "The directory you choose:"
+      echo "--------------------------------------------------"
+      echo "$storedirectory_noprefix"
+      echo "--------------------------------------------------"
+    else
+      tree -d --noreport $storepath
+      storedirectory_list=`tree $storepath -dfi `
+      echo "you should put more information"
+      read_store
+      checkstore "$storedirectory_list"
+    fi
+  fi
+
+  local number=`echo "$1" | wc -l`
+  if [ $number = 1 ]; then
+    echo "The directory you choose is:"
+    echo "--------------------------------------------------"
+    echo "$storedirectory_noprefix"
+    echo "--------------------------------------------------"
+  else
+    echo "The directory you choose maybe:"
+    echo "--------------------------------------------------"
+    echo "$storedirectory_noprefix"
+    echo "--------------------------------------------------"
+    echo "you should put more information!"
+    read_store
+    checkstore "$storedirectory_list"
+  fi
+}
+
+read_store
+checkstore "$storedirectory_list"
+
+
+#**************************************************
+# the parameter that will be passed to the rest program
+# storedirectory_list: Linux style path with prefix $storepath
+# rishandle: .ris filename without prefix $storepath
+# downloadpath: full path for downloaddirectory
+# number: the number of ris file we are going to handle
+#**************************************************
+cd "$downloadpath"
+adcovert_path() {
+  local prefix=`echo "${1:5:1}"`
+  local end=`echo "${1:7}"`
+  winpath=${prefix^}':\'${end//\//\\} 
+}
+change_ris() {
+  # $1 should be risfile path( because you will cd to downloadpath, so just the name)
+  # $2 should be win_version path of pdffile
+  sed -i -e "/^L1/{ c L1  - file://${2}
+}" "$1"
+}
+rename_move_pdf()
+{
+  # find the path of pdf
+  local readpath=`sed "/L1/p" -n "$1"| sed "s/L1  - file:\/\///g"| tr "\\\\\\\\" "/"`
+  local filepath=`covertpath "$readpath"`
+
+  # new name of pdf
+  local year=`sed "/Y1  -/p" -n "$1"`
+  local jounal=`sed "/JO  -/p" -n "$1"`
+  local title=`sed "/TI  -/p" -n "$1"`
+  year=`echo ${year:6}|tr " " "_"`
+  jounal=`echo ${jounal:6}|tr " " "_"`
+  title=`echo ${title:6}|tr " " "_"`
+  local filename="$jounal-$year-$title.pdf"
+  mv "$filepath" "$storedirectory_list/$filename"
+  winpdfpath=`adcovert_path "$storedirectory_list/$filename"`
+  winpdfpath=${winpdfpath//\\/\\\\}
+  change_ris "$1" "$winpdfpath"
+  
+  # change the pdfpath that stored in the .ris file
+}
+
+move_ris(){
+  if [ ! -d "${ris_storepath}${storedirectory_noprefix}" ]; then
+    mkdir -p "${ris_storepath}${storedirectory_noprefix}/" 
+  fi
+  mv "$1" "${ris_storepath}${storedirectory_noprefix}"
+}
+
+for (( kk=1 ; kk<=$number ; kk++ ))
+do
+  risfile=`echo "$rislist" |sed "${kk}p" -n`
+  rename_move_pdf "$risfile"
+  move_ris "$risfile"
+done
+
+  
+
+
+
+
+
+  
+
+
+
+
+

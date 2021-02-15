@@ -1,0 +1,9 @@
+## The Download directory Path:
+C:\Users\12236\Downloads
+## The store directory Path:
+E:\Jianguo\Lab\Paper
+## Do you want to store your RIS file?
+Yes
+## The store directory Path for .ris files:
+E:\Jianguo\Lab\PaperRIS
+
